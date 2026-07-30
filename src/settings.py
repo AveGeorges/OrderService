@@ -16,13 +16,14 @@ class Settings(BaseSettings):
     port: int = 8000
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/orders"
+    database_auto_create: bool = True
 
     capashino_base_url: str = "https://capashino.dev-2.python-labs.ru"
     api_token: str = ""
 
-    order_service_internal_url: str = (
-        "http://order-service.default.svc:8000"
-    )
+    # Internal Kubernetes DNS of this service (for Payments callback)
+    # Format: http://<service-name>.<namespace>.svc:<port>
+    order_service_internal_url: str = "http://order-service.default.svc:8000"
 
     kafka_bootstrap_servers: str = ""
 
