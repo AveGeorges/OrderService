@@ -1,9 +1,9 @@
-"""Pydantic request/response schemas — completed in stage 1."""
-
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from domain.entities import Order
 
 
 class OrderCreateRequest(BaseModel):
@@ -23,3 +23,15 @@ class OrderResponse(BaseModel):
     status: str
     created_at: datetime
     update_at: datetime
+
+
+def order_to_response(order: Order) -> OrderResponse:
+    return OrderResponse(
+        id=order.id,
+        user_id=order.user_id,
+        quantity=order.quantity,
+        item_id=order.item_id,
+        status=order.status.value,
+        created_at=order.created_at,
+        update_at=order.updated_at,
+    )

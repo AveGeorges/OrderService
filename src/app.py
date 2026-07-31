@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from infrastructure.persistence.database import create_engine, create_session_factory
 from infrastructure.persistence.models import Base
+from presentation.api.exception_handlers import register_exception_handlers
 from presentation.api.routes import health, orders
 from settings import Settings, get_settings
 
@@ -43,5 +44,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(orders.router)
+    register_exception_handlers(app)
 
     return app
