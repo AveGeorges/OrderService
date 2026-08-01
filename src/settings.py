@@ -44,8 +44,10 @@ class Settings(BaseSettings):
     capashino_base_url: str = "https://capashino.dev-2.python-labs.ru"
     api_token: str = ""
 
-    # Internal Kubernetes DNS of this service (for Payments callback)
-    order_service_internal_url: str = "http://order-service.default.svc:8000"
+    order_service_internal_url: str = (
+        "http://student-avegeorges-order-service-web"
+        ".student-avegeorges-order-service.svc:8000"
+    )
 
     kafka_bootstrap_servers: str = ""
 
@@ -63,6 +65,11 @@ class Settings(BaseSettings):
             f"@{self.postgres_host}:{self.postgres_port}"
             f"/{self.postgres_database_name}"
         )
+
+    @property
+    def payment_callback_url(self) -> str:
+        base = self.order_service_internal_url.rstrip("/")
+        return f"{base}/api/orders/payment-callback"
 
 
 @lru_cache

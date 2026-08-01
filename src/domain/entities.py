@@ -25,3 +25,11 @@ class Order:
     updated_at: datetime = field(
         default_factory=lambda: datetime.now(UTC),
     )
+
+    def mark_paid(self) -> None:
+        self.status = OrderStatus.PAID
+        self.updated_at = datetime.now(UTC)
+
+    def mark_cancelled(self) -> None:
+        self.status = OrderStatus.CANCELLED
+        self.updated_at = datetime.now(UTC)

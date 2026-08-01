@@ -3,6 +3,7 @@ from typing import Self
 from uuid import UUID
 
 from application.ports.catalog import CatalogClient, CatalogItem
+from application.ports.payments import CreatePaymentRequest, Payment, PaymentsClient
 from application.ports.repositories import OrderRepository
 from application.ports.uow import UnitOfWork
 from domain.entities import Order
@@ -77,3 +78,21 @@ class FakeCatalogClient(CatalogClient):
         if item_id in self._missing_ids or item_id not in self._items:
             raise ItemNotFoundError(item_id)
         return self._items[item_id]
+
+
+class FakePaymentsClient(PaymentsClient):
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self._error = error
+        self.calls: list[CreatePaymentRequest] = []
+
+    async def create_payment(self, request: CreatePaymentRequest) -> Payment:
+        self.calls.append(request)
+        if self._error is not None:
+            raise self._error
+        return Payment(
+            id="payment-1",
+            order_id=str(request.order_id),
+            amount=request.amount,
+            status="pending",
+            idempotency_key=request.idempotency_key,
+        )

@@ -25,6 +25,14 @@ class OrderResponse(BaseModel):
     update_at: datetime
 
 
+class PaymentCallbackRequest(BaseModel):
+    payment_id: str = Field(..., min_length=1)
+    order_id: UUID
+    status: str = Field(..., min_length=1)
+    amount: str = Field(..., min_length=1)
+    error_message: str | None = None
+
+
 def order_to_response(order: Order) -> OrderResponse:
     return OrderResponse(
         id=order.id,

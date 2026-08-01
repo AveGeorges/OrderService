@@ -1,9 +1,12 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from uuid import uuid4
 
+from application.exceptions import PaymentsServiceError
 from application.ports.catalog import CatalogClient
+from application.ports.payments import CreatePaymentRequest, PaymentsClient
 from application.ports.uow import UnitOfWork
 from domain.entities import Order, OrderStatus
 from domain.exceptions import InsufficientStockError
@@ -24,9 +27,13 @@ class CreateOrder:
         self,
         uow_factory: Callable[[], UnitOfWork],
         catalog_client: CatalogClient,
+        payments_client: PaymentsClient,
+        payment_callback_url: str,
     ) -> None:
         self._uow_factory = uow_factory
         self._catalog = catalog_client
+        self._payments = payments_client
+        self._payment_callback_url = payment_callback_url
 
     async def __call__(self, command: CreateOrderCommand) -> Order:
         async with self._uow_factory() as uow:
@@ -64,4 +71,31 @@ class CreateOrder:
             saved = await uow.orders.add(order)
             await uow.commit()
             logger.info("Order created id=%s status=%s", saved.id, saved.status)
-            return saved
+
+        amount = (item.price * Decimal(command.quantity)).quantize(Decimal("0.01"))
+        try:
+            payment = await self._payments.create_payment(
+                CreatePaymentRequest(
+                    order_id=saved.id,
+                    amount=amount,
+                    callback_url=self._payment_callback_url,
+                    idempotency_key=command.idempotency_key,
+                ),
+            )
+            logger.info(
+                "Payment created payment_id=%s order_id=%s status=%s",
+                payment.id,
+                saved.id,
+                payment.status,
+            )
+        except PaymentsServiceError:
+            logger.exception("Payment failed for order_id=%s, cancelling", saved.id)
+            async with self._uow_factory() as uow:
+                current = await uow.orders.get_by_id(saved.id)
+                if current is not None and current.status == OrderStatus.NEW:
+                    current.mark_cancelled()
+                    saved = await uow.orders.update(current)
+                    await uow.commit()
+            raise
+
+        return saved

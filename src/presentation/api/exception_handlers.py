@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from application.exceptions import CatalogServiceError
+from application.exceptions import CatalogServiceError, PaymentsServiceError
 from domain.exceptions import (
     InsufficientStockError,
     ItemNotFoundError,
@@ -35,5 +35,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def catalog_service_handler(
         _request: Request,
         exc: CatalogServiceError,
+    ) -> JSONResponse:
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+    @app.exception_handler(PaymentsServiceError)
+    async def payments_service_handler(
+        _request: Request,
+        exc: PaymentsServiceError,
     ) -> JSONResponse:
         return JSONResponse(status_code=502, content={"detail": str(exc)})
