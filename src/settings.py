@@ -1,6 +1,16 @@
 from functools import lru_cache
+from urllib.parse import quote_plus
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _to_asyncpg_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url.removeprefix("postgres://")
+    if url.startswith("postgresql://") and "+asyncpg" not in url:
+        return "postgresql+asyncpg://" + url.removeprefix("postgresql://")
+    return url
 
 
 class Settings(BaseSettings):
@@ -15,17 +25,44 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/orders"
+    # LMS / local Postgres (имена как в Portal)
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_username: str = "postgres"
+    postgres_password: str = "postgres"
+    postgres_database_name: str = "orders"
+    postgres_connection_string: str | None = None
+
+    # Опциональный полный URL (если задан — имеет приоритет)
+    database_url_override: str | None = Field(
+        default=None,
+        validation_alias="DATABASE_URL",
+    )
+
     database_auto_create: bool = True
 
     capashino_base_url: str = "https://capashino.dev-2.python-labs.ru"
     api_token: str = ""
 
     # Internal Kubernetes DNS of this service (for Payments callback)
-    # Format: http://<service-name>.<namespace>.svc:<port>
     order_service_internal_url: str = "http://order-service.default.svc:8000"
 
     kafka_bootstrap_servers: str = ""
+
+    @property
+    def database_url(self) -> str:
+        if self.database_url_override:
+            return _to_asyncpg_url(self.database_url_override)
+        if self.postgres_connection_string:
+            return _to_asyncpg_url(self.postgres_connection_string)
+
+        user = quote_plus(self.postgres_username)
+        password = quote_plus(self.postgres_password)
+        return (
+            f"postgresql+asyncpg://{user}:{password}"
+            f"@{self.postgres_host}:{self.postgres_port}"
+            f"/{self.postgres_database_name}"
+        )
 
 
 @lru_cache

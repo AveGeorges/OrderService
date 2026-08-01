@@ -39,15 +39,20 @@ Healthcheck: `GET /health`
 
 | Переменная | Описание |
 |---|---|
-| `DATABASE_URL` | SQLAlchemy async URL (`postgresql+asyncpg://...`) |
+| `POSTGRES_HOST` | Хост Postgres (`localhost` локально, в compose — `db`, в LMS — из Portal) |
+| `POSTGRES_PORT` | Порт Postgres |
+| `POSTGRES_USERNAME` | Пользователь БД |
+| `POSTGRES_PASSWORD` | Пароль БД |
+| `POSTGRES_DATABASE_NAME` | Имя БД |
+| `POSTGRES_CONNECTION_STRING` | Опционально: полный URL (`postgres://...`), будет приведён к `postgresql+asyncpg://` |
 | `DATABASE_AUTO_CREATE` | Создавать таблицы при старте (`true`/`false`) |
 | `CAPASHINO_BASE_URL` | Базовый URL Capashino (в кластере — internal hostname) |
 | `API_TOKEN` | Токен для заголовка `X-API-Key` |
-| `ORDER_SERVICE_INTERNAL_URL` | Internal DNS сервиса для payment callback: `http://<service>.<namespace>.svc:<port>` |
-| `KAFKA_BOOTSTRAP_SERVERS` | Брокер Kafka, например `kafka.kafka.svc.cluster.local:9092` |
+| `ORDER_SERVICE_INTERNAL_URL` | Internal DNS сервиса для payment callback |
+| `KAFKA_BOOTSTRAP_SERVERS` | Брокер Kafka |
 | `HOST` / `PORT` | Хост и порт API |
 
-В LMS Portal добавьте эти переменные на детальной странице сервиса.
+В LMS Portal переменные `POSTGRES_*` уже выдаются — код собирает из них async URL. Дополнительно `DATABASE_URL` задавать не нужно.
 
 Для callback из Payments внутри кластера **не** используйте внешний `*.python-labs.ru` — только Kubernetes DNS:
 
