@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     )
 
     kafka_bootstrap_servers: str = ""
+    kafka_order_events_topic: str = "student_system-order.events"
+    kafka_shipment_events_topic: str = "student_system-shipment.events"
+    kafka_consumer_group_id: str = "order-service-shipment"
+
+    outbox_poll_interval_seconds: float = 2.0
+    outbox_batch_size: int = 100
+    outbox_max_retries: int = 5
 
     @property
     def database_url(self) -> str:

@@ -3,10 +3,13 @@ from typing import Self
 from uuid import UUID
 
 from application.ports.catalog import CatalogClient, CatalogItem
+from application.ports.inbox import InboxRepository
+from application.ports.messaging import EventPublisher
+from application.ports.outbox import OutboxRepository
 from application.ports.payments import CreatePaymentRequest, Payment, PaymentsClient
 from application.ports.repositories import OrderRepository
 from application.ports.uow import UnitOfWork
-from domain.entities import Order
+from domain.entities import InboxEvent, Order, OutboxEvent, OutboxStatus
 from domain.exceptions import ItemNotFoundError
 
 
@@ -32,14 +35,74 @@ class InMemoryOrderRepository(OrderRepository):
         return order
 
 
-class InMemoryUnitOfWork(UnitOfWork):
-    def __init__(self, storage: dict[UUID, Order]) -> None:
+class InMemoryOutboxRepository(OutboxRepository):
+    def __init__(self, storage: dict[UUID, OutboxEvent]) -> None:
         self._storage = storage
-        self.orders = InMemoryOrderRepository(storage)
+
+    async def add(self, event: OutboxEvent) -> OutboxEvent:
+        self._storage[event.id] = event
+        return event
+
+    async def get_pending_for_update(self, limit: int = 100) -> list[OutboxEvent]:
+        pending = [
+            event
+            for event in self._storage.values()
+            if event.status == OutboxStatus.PENDING
+        ]
+        pending.sort(key=lambda event: event.created_at)
+        return pending[:limit]
+
+    async def mark_as_sent(self, event_id: UUID) -> None:
+        event = self._storage[event_id]
+        event.status = OutboxStatus.SENT
+
+    async def mark_as_failed(
+        self,
+        event_id: UUID,
+        error: str,
+        *,
+        max_retries: int = 5,
+    ) -> None:
+        event = self._storage[event_id]
+        event.retry_count += 1
+        event.last_error = error
+        if event.retry_count >= max_retries:
+            event.status = OutboxStatus.FAILED
+
+
+class InMemoryInboxRepository(InboxRepository):
+    def __init__(self, storage: dict[str, InboxEvent]) -> None:
+        self._storage = storage
+
+    async def add(self, event: InboxEvent) -> InboxEvent | None:
+        if event.event_id in self._storage:
+            return None
+        self._storage[event.event_id] = event
+        return event
+
+    async def exists(self, event_id: str) -> bool:
+        return event_id in self._storage
+
+
+class InMemoryUnitOfWork(UnitOfWork):
+    def __init__(
+        self,
+        orders: dict[UUID, Order] | None = None,
+        outbox: dict[UUID, OutboxEvent] | None = None,
+        inbox: dict[str, InboxEvent] | None = None,
+    ) -> None:
+        self._orders = orders if orders is not None else {}
+        self._outbox = outbox if outbox is not None else {}
+        self._inbox = inbox if inbox is not None else {}
+        self.orders = InMemoryOrderRepository(self._orders)
+        self.outbox = InMemoryOutboxRepository(self._outbox)
+        self.inbox = InMemoryInboxRepository(self._inbox)
         self.committed = False
 
     async def __aenter__(self) -> Self:
-        self.orders = InMemoryOrderRepository(self._storage)
+        self.orders = InMemoryOrderRepository(self._orders)
+        self.outbox = InMemoryOutboxRepository(self._outbox)
+        self.inbox = InMemoryInboxRepository(self._inbox)
         return self
 
     async def __aexit__(
@@ -96,3 +159,28 @@ class FakePaymentsClient(PaymentsClient):
             status="pending",
             idempotency_key=request.idempotency_key,
         )
+
+
+class FakeEventPublisher(EventPublisher):
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self._error = error
+        self.started = False
+        self.stopped = False
+        self.calls: list[tuple[str, str, dict]] = []
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def publish(
+        self,
+        topic: str,
+        *,
+        key: str,
+        payload: dict,
+    ) -> None:
+        if self._error is not None:
+            raise self._error
+        self.calls.append((topic, key, payload))

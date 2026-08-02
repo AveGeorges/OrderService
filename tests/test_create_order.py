@@ -11,7 +11,7 @@ from application.usecases.process_payment_callback import (
     PaymentCallbackCommand,
     ProcessPaymentCallback,
 )
-from domain.entities import OrderStatus
+from domain.entities import EventType, OrderStatus, OutboxStatus
 from domain.exceptions import (
     InsufficientStockError,
     ItemNotFoundError,
@@ -28,9 +28,14 @@ def storage() -> dict:
 
 
 @pytest.fixture
-def uow_factory(storage: dict):
+def outbox_storage() -> dict:
+    return {}
+
+
+@pytest.fixture
+def uow_factory(storage: dict, outbox_storage: dict):
     def factory() -> InMemoryUnitOfWork:
-        return InMemoryUnitOfWork(storage)
+        return InMemoryUnitOfWork(storage, outbox_storage)
 
     return factory
 
@@ -232,7 +237,10 @@ async def test_get_order_not_found(uow_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_payment_callback_succeeded(uow_factory, storage: dict) -> None:
+async def test_payment_callback_succeeded(
+    uow_factory,
+    outbox_storage: dict,
+) -> None:
     catalog = FakeCatalogClient(
         {
             "item-1": CatalogItem(
@@ -261,6 +269,17 @@ async def test_payment_callback_succeeded(uow_factory, storage: dict) -> None:
         ),
     )
     assert updated.status == OrderStatus.PAID
+    assert len(outbox_storage) == 1
+    event = next(iter(outbox_storage.values()))
+    assert event.event_type == EventType.ORDER_PAID
+    assert event.status == OutboxStatus.PENDING
+    assert event.payload == {
+        "event_type": EventType.ORDER_PAID,
+        "order_id": str(order.id),
+        "item_id": "item-1",
+        "quantity": 1,
+        "idempotency_key": "cb-ok",
+    }
 
     again = await ProcessPaymentCallback(uow_factory)(
         PaymentCallbackCommand(
@@ -271,10 +290,14 @@ async def test_payment_callback_succeeded(uow_factory, storage: dict) -> None:
         ),
     )
     assert again.status == OrderStatus.PAID
+    assert len(outbox_storage) == 1
 
 
 @pytest.mark.asyncio
-async def test_payment_callback_failed(uow_factory, storage: dict) -> None:
+async def test_payment_callback_failed(
+    uow_factory,
+    outbox_storage: dict,
+) -> None:
     catalog = FakeCatalogClient(
         {
             "item-1": CatalogItem(
@@ -304,3 +327,4 @@ async def test_payment_callback_failed(uow_factory, storage: dict) -> None:
         ),
     )
     assert updated.status == OrderStatus.CANCELLED
+    assert outbox_storage == {}

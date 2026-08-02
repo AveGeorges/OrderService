@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from application.ports.uow import UnitOfWork
-from domain.entities import Order, OrderStatus
+from domain.entities import EventType, Order, OrderStatus, OutboxEvent
 from domain.exceptions import OrderNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ class ProcessPaymentCallback:
             if order is None:
                 raise OrderNotFoundError(str(command.order_id))
 
+            emit_order_paid = False
             normalized = command.status.lower()
             if normalized == "succeeded":
                 if order.status == OrderStatus.PAID:
@@ -45,6 +46,7 @@ class ProcessPaymentCallback:
                     )
                     return order
                 order.mark_paid()
+                emit_order_paid = True
             elif normalized == "failed":
                 if order.status == OrderStatus.CANCELLED:
                     logger.info(
@@ -69,6 +71,8 @@ class ProcessPaymentCallback:
                 return order
 
             updated = await uow.orders.update(order)
+            if emit_order_paid:
+                await uow.outbox.add(_order_paid_outbox_event(updated))
             await uow.commit()
             logger.info(
                 "Payment callback applied order_id=%s status=%s payment_id=%s",
@@ -77,3 +81,16 @@ class ProcessPaymentCallback:
                 command.payment_id,
             )
             return updated
+
+
+def _order_paid_outbox_event(order: Order) -> OutboxEvent:
+    return OutboxEvent(
+        event_type=EventType.ORDER_PAID,
+        payload={
+            "event_type": EventType.ORDER_PAID,
+            "order_id": str(order.id),
+            "item_id": order.item_id,
+            "quantity": order.quantity,
+            "idempotency_key": order.idempotency_key,
+        },
+    )

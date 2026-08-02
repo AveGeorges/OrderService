@@ -17,8 +17,15 @@ from settings import Settings
 from tests.fakes import FakeCatalogClient, FakePaymentsClient, InMemoryUnitOfWork
 
 
-def _build_client() -> tuple[TestClient, dict, FakeCatalogClient, FakePaymentsClient]:
+def _build_client() -> tuple[
+    TestClient,
+    dict,
+    dict,
+    FakeCatalogClient,
+    FakePaymentsClient,
+]:
     storage: dict[UUID, object] = {}
+    outbox_storage: dict = {}
     catalog = FakeCatalogClient(
         {
             "item-1": CatalogItem(
@@ -39,7 +46,7 @@ def _build_client() -> tuple[TestClient, dict, FakeCatalogClient, FakePaymentsCl
     payments = FakePaymentsClient()
 
     def uow_factory() -> InMemoryUnitOfWork:
-        return InMemoryUnitOfWork(storage)  # type: ignore[arg-type]
+        return InMemoryUnitOfWork(storage, outbox_storage)  # type: ignore[arg-type]
 
     app = create_app(
         Settings(
@@ -60,7 +67,7 @@ def _build_client() -> tuple[TestClient, dict, FakeCatalogClient, FakePaymentsCl
     app.dependency_overrides[get_process_payment_callback_use_case] = lambda: (
         ProcessPaymentCallback(uow_factory=uow_factory)
     )
-    return TestClient(app), storage, catalog, payments  # type: ignore[return-value]
+    return TestClient(app), storage, outbox_storage, catalog, payments
 
 
 def test_create_order_api_201() -> None:
@@ -167,7 +174,7 @@ def test_create_order_validation_error() -> None:
 
 
 def test_payment_callback_succeeded_200() -> None:
-    client, _, _, _ = _build_client()
+    client, _, outbox_storage, _, _ = _build_client()
     with client:
         created = client.post(
             "/api/orders",
@@ -193,6 +200,10 @@ def test_payment_callback_succeeded_200() -> None:
 
         order = client.get(f"/api/orders/{created['id']}").json()
         assert order["status"] == "PAID"
+        assert len(outbox_storage) == 1
+        event = next(iter(outbox_storage.values()))
+        assert event.event_type == "order.paid"
+        assert event.payload["order_id"] == created["id"]
 
         # idempotent repeat
         again = client.post(
@@ -207,6 +218,7 @@ def test_payment_callback_succeeded_200() -> None:
         )
         assert again.status_code == 200
         assert client.get(f"/api/orders/{created['id']}").json()["status"] == "PAID"
+        assert len(outbox_storage) == 1
 
 
 def test_payment_callback_failed_cancels() -> None:

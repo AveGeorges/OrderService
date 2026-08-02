@@ -14,17 +14,26 @@ src/
 ├── app.py               # create_app()
 └── settings.py          # конфигурация
 bin/
-└── api.py               # точка запуска API
+├── api.py               # точка запуска API
+├── outbox_worker.py     # публикация outbox → Kafka
+└── shipment_consumer.py # Shipping events → inbox → статусы
 ```
 
 ## Локальный запуск
 
 ```bash
 cp .env.example .env
-# заполните API_TOKEN
+# заполните API_TOKEN и при необходимости KAFKA_BOOTSTRAP_SERVERS
 
 uv sync --group dev
 uv run python -m bin.api
+```
+
+Kafka-воркеры (нужен брокер):
+
+```bash
+uv run python -m bin.outbox_worker
+uv run python -m bin.shipment_consumer
 ```
 
 Или через Docker Compose (API + Postgres):
@@ -32,6 +41,14 @@ uv run python -m bin.api
 ```bash
 docker compose up --build
 ```
+
+С воркерами Kafka:
+
+```bash
+docker compose --profile kafka up --build
+```
+
+Роль контейнера задаётся `APP_ROLE`: `api` (по умолчанию), `outbox-worker`, `shipment-consumer`.
 
 Healthcheck: `GET /health`
 
@@ -49,16 +66,18 @@ Healthcheck: `GET /health`
 | `CAPASHINO_BASE_URL` | Базовый URL Capashino (в кластере — internal hostname) |
 | `API_TOKEN` | Токен для заголовка `X-API-Key` |
 | `ORDER_SERVICE_INTERNAL_URL` | Internal DNS сервиса для payment callback |
-| `KAFKA_BOOTSTRAP_SERVERS` | Брокер Kafka |
+| `KAFKA_BOOTSTRAP_SERVERS` | Брокер Kafka (в LMS: `kafka.kafka.svc.cluster.local:9092`) |
+| `APP_ROLE` | Что запускает контейнер: `api` / `outbox-worker` / `shipment-consumer` |
+| `KAFKA_ORDER_EVENTS_TOPIC` | Топик исходящих событий заказа (по умолчанию `student_system-order.events`) |
+| `KAFKA_SHIPMENT_EVENTS_TOPIC` | Топик входящих событий доставки |
+| `KAFKA_CONSUMER_GROUP_ID` | Consumer group для shipment events |
+| `OUTBOX_POLL_INTERVAL_SECONDS` | Интервал опроса outbox воркером |
+| `OUTBOX_BATCH_SIZE` | Размер батча outbox |
+| `OUTBOX_MAX_RETRIES` | После скольких ошибок событие → `FAILED` |
 | `HOST` / `PORT` | Хост и порт API |
 
-В LMS Portal переменные `POSTGRES_*` уже выдаются — код собирает из них async URL. Дополнительно `DATABASE_URL` задавать не нужно.
 
-Для callback из Payments внутри кластера **не** используйте внешний `*.python-labs.ru` — только Kubernetes DNS:
 
-```text
-http://<service-name>.<namespace>.svc:8000/api/orders/payment-callback
-```
 
 ## Качество кода
 

@@ -1,12 +1,14 @@
-"""Unit of Work implementation — completed in stage 1."""
-
 from types import TracebackType
 from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from application.ports.uow import UnitOfWork
-from infrastructure.persistence.repositories import SQLAlchemyOrderRepository
+from infrastructure.persistence.repositories import (
+    SQLAlchemyInboxRepository,
+    SQLAlchemyOrderRepository,
+    SQLAlchemyOutboxRepository,
+)
 
 
 class SQLAlchemyUnitOfWork(UnitOfWork):
@@ -17,6 +19,8 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
     async def __aenter__(self) -> Self:
         self._session = self._session_factory()
         self.orders = SQLAlchemyOrderRepository(self._session)
+        self.outbox = SQLAlchemyOutboxRepository(self._session)
+        self.inbox = SQLAlchemyInboxRepository(self._session)
         return self
 
     async def __aexit__(
