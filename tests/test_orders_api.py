@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app import create_app
 from application.ports.catalog import CatalogItem
+from application.services.order_notifications import OrderNotifier
 from application.usecases.create_order import CreateOrder
 from application.usecases.get_order import GetOrder
 from application.usecases.process_payment_callback import ProcessPaymentCallback
@@ -14,7 +15,12 @@ from presentation.api.dependencies import (
     get_process_payment_callback_use_case,
 )
 from settings import Settings
-from tests.fakes import FakeCatalogClient, FakePaymentsClient, InMemoryUnitOfWork
+from tests.fakes import (
+    FakeCatalogClient,
+    FakeNotificationsClient,
+    FakePaymentsClient,
+    InMemoryUnitOfWork,
+)
 
 
 def _build_client() -> tuple[
@@ -44,6 +50,7 @@ def _build_client() -> tuple[
         missing_ids={"missing-item"},
     )
     payments = FakePaymentsClient()
+    notifier = OrderNotifier(FakeNotificationsClient())
 
     def uow_factory() -> InMemoryUnitOfWork:
         return InMemoryUnitOfWork(storage, outbox_storage)  # type: ignore[arg-type]
@@ -60,12 +67,13 @@ def _build_client() -> tuple[
         catalog_client=catalog,
         payments_client=payments,
         payment_callback_url="http://order-service.svc:8000/api/orders/payment-callback",
+        notifier=notifier,
     )
     app.dependency_overrides[get_get_order_use_case] = lambda: GetOrder(
         uow_factory=uow_factory,
     )
     app.dependency_overrides[get_process_payment_callback_use_case] = lambda: (
-        ProcessPaymentCallback(uow_factory=uow_factory)
+        ProcessPaymentCallback(uow_factory=uow_factory, notifier=notifier)
     )
     return TestClient(app), storage, outbox_storage, catalog, payments
 

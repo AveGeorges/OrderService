@@ -11,3 +11,8 @@ class CatalogServiceError(DomainError):
 class PaymentsServiceError(DomainError):
     def __init__(self, message: str = "Payments service unavailable") -> None:
         super().__init__(message)
+
+
+class NotificationsServiceError(DomainError):
+    def __init__(self, message: str = "Notifications service unavailable") -> None:
+        super().__init__(message)

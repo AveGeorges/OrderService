@@ -9,10 +9,12 @@ import signal
 
 from aiokafka import AIOKafkaConsumer
 
+from application.services.order_notifications import OrderNotifier
 from application.usecases.process_shipment_event import (
     ProcessShipmentEvent,
     parse_shipment_payload,
 )
+from infrastructure.http.notifications import HttpNotificationsClient
 from infrastructure.persistence.database import create_engine, create_session_factory
 from infrastructure.persistence.uow import SQLAlchemyUnitOfWork
 from settings import get_settings
@@ -31,8 +33,15 @@ async def run() -> None:
 
     engine = create_engine(settings.database_url)
     session_factory = create_session_factory(engine)
+    notifier = OrderNotifier(
+        HttpNotificationsClient(
+            base_url=settings.capashino_base_url,
+            api_token=settings.api_token,
+        ),
+    )
     process = ProcessShipmentEvent(
         uow_factory=lambda: SQLAlchemyUnitOfWork(session_factory),
+        notifier=notifier,
     )
 
     consumer = AIOKafkaConsumer(

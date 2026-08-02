@@ -64,7 +64,7 @@ Healthcheck: `GET /health`
 | `POSTGRES_CONNECTION_STRING` | Опционально: полный URL (`postgres://...`), будет приведён к `postgresql+asyncpg://` |
 | `DATABASE_AUTO_CREATE` | Создавать таблицы при старте (`true`/`false`) |
 | `CAPASHINO_BASE_URL` | Базовый URL Capashino (в кластере — internal hostname) |
-| `API_TOKEN` | Токен для заголовка `X-API-Key` |
+| `API_TOKEN` | Токен для заголовка `X-API-Key` (Catalog / Payments / Notifications) |
 | `ORDER_SERVICE_INTERNAL_URL` | Internal DNS сервиса для payment callback |
 | `KAFKA_BOOTSTRAP_SERVERS` | Брокер Kafka (в LMS: `kafka.kafka.svc.cluster.local:9092`) |
 | `APP_ROLE` | Что запускает контейнер: `api` / `outbox-worker` / `shipment-consumer` |

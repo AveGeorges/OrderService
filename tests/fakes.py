@@ -5,6 +5,11 @@ from uuid import UUID
 from application.ports.catalog import CatalogClient, CatalogItem
 from application.ports.inbox import InboxRepository
 from application.ports.messaging import EventPublisher
+from application.ports.notifications import (
+    Notification,
+    NotificationsClient,
+    SendNotificationRequest,
+)
 from application.ports.outbox import OutboxRepository
 from application.ports.payments import CreatePaymentRequest, Payment, PaymentsClient
 from application.ports.repositories import OrderRepository
@@ -158,6 +163,23 @@ class FakePaymentsClient(PaymentsClient):
             amount=request.amount,
             status="pending",
             idempotency_key=request.idempotency_key,
+        )
+
+
+class FakeNotificationsClient(NotificationsClient):
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self._error = error
+        self.calls: list[SendNotificationRequest] = []
+
+    async def send(self, request: SendNotificationRequest) -> Notification:
+        self.calls.append(request)
+        if self._error is not None:
+            raise self._error
+        return Notification(
+            id="notification-1",
+            user_id="user-1",
+            message=request.message,
+            reference_id=request.reference_id,
         )
 
 

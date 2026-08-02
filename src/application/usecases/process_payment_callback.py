@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from application.ports.uow import UnitOfWork
+from application.services.order_notifications import OrderNotifier
 from domain.entities import EventType, Order, OrderStatus, OutboxEvent
 from domain.exceptions import OrderNotFoundError
 
@@ -20,8 +21,13 @@ class PaymentCallbackCommand:
 
 
 class ProcessPaymentCallback:
-    def __init__(self, uow_factory: Callable[[], UnitOfWork]) -> None:
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork],
+        notifier: OrderNotifier,
+    ) -> None:
         self._uow_factory = uow_factory
+        self._notifier = notifier
 
     async def __call__(self, command: PaymentCallbackCommand) -> Order:
         async with self._uow_factory() as uow:
@@ -30,6 +36,8 @@ class ProcessPaymentCallback:
                 raise OrderNotFoundError(str(command.order_id))
 
             emit_order_paid = False
+            notify_status: OrderStatus | None = None
+            notify_reason: str | None = None
             normalized = command.status.lower()
             if normalized == "succeeded":
                 if order.status == OrderStatus.PAID:
@@ -47,6 +55,7 @@ class ProcessPaymentCallback:
                     return order
                 order.mark_paid()
                 emit_order_paid = True
+                notify_status = OrderStatus.PAID
             elif normalized == "failed":
                 if order.status == OrderStatus.CANCELLED:
                     logger.info(
@@ -62,6 +71,8 @@ class ProcessPaymentCallback:
                     )
                     return order
                 order.mark_cancelled()
+                notify_status = OrderStatus.CANCELLED
+                notify_reason = command.error_message or "ошибка оплаты"
             else:
                 logger.warning(
                     "Unknown payment status=%s order_id=%s",
@@ -80,7 +91,14 @@ class ProcessPaymentCallback:
                 updated.status,
                 command.payment_id,
             )
-            return updated
+
+        if notify_status is not None:
+            await self._notifier.notify_status(
+                updated.id,
+                notify_status,
+                reason=notify_reason,
+            )
+        return updated
 
 
 def _order_paid_outbox_event(order: Order) -> OutboxEvent:

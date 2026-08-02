@@ -5,6 +5,7 @@ import pytest
 
 from application.exceptions import CatalogServiceError, PaymentsServiceError
 from application.ports.catalog import CatalogItem
+from application.services.order_notifications import OrderNotifier
 from application.usecases.create_order import CreateOrder, CreateOrderCommand
 from application.usecases.get_order import GetOrder
 from application.usecases.process_payment_callback import (
@@ -17,7 +18,12 @@ from domain.exceptions import (
     ItemNotFoundError,
     OrderNotFoundError,
 )
-from tests.fakes import FakeCatalogClient, FakePaymentsClient, InMemoryUnitOfWork
+from tests.fakes import (
+    FakeCatalogClient,
+    FakeNotificationsClient,
+    FakePaymentsClient,
+    InMemoryUnitOfWork,
+)
 
 CALLBACK_URL = "http://order-service.svc:8000/api/orders/payment-callback"
 
@@ -33,6 +39,16 @@ def outbox_storage() -> dict:
 
 
 @pytest.fixture
+def notifications() -> FakeNotificationsClient:
+    return FakeNotificationsClient()
+
+
+@pytest.fixture
+def notifier(notifications: FakeNotificationsClient) -> OrderNotifier:
+    return OrderNotifier(notifications)
+
+
+@pytest.fixture
 def uow_factory(storage: dict, outbox_storage: dict):
     def factory() -> InMemoryUnitOfWork:
         return InMemoryUnitOfWork(storage, outbox_storage)
@@ -44,12 +60,14 @@ def _create_order(
     uow_factory,
     catalog: FakeCatalogClient,
     payments: FakePaymentsClient | None = None,
+    notifier: OrderNotifier | None = None,
 ) -> CreateOrder:
     return CreateOrder(
         uow_factory=uow_factory,
         catalog_client=catalog,
         payments_client=payments or FakePaymentsClient(),
         payment_callback_url=CALLBACK_URL,
+        notifier=notifier or OrderNotifier(FakeNotificationsClient()),
     )
 
 
@@ -260,7 +278,10 @@ async def test_payment_callback_succeeded(
         ),
     )
 
-    updated = await ProcessPaymentCallback(uow_factory)(
+    updated = await ProcessPaymentCallback(
+        uow_factory,
+        OrderNotifier(FakeNotificationsClient()),
+    )(
         PaymentCallbackCommand(
             payment_id="pay-1",
             order_id=order.id,
@@ -281,7 +302,10 @@ async def test_payment_callback_succeeded(
         "idempotency_key": "cb-ok",
     }
 
-    again = await ProcessPaymentCallback(uow_factory)(
+    again = await ProcessPaymentCallback(
+        uow_factory,
+        OrderNotifier(FakeNotificationsClient()),
+    )(
         PaymentCallbackCommand(
             payment_id="pay-1",
             order_id=order.id,
@@ -317,7 +341,10 @@ async def test_payment_callback_failed(
         ),
     )
 
-    updated = await ProcessPaymentCallback(uow_factory)(
+    updated = await ProcessPaymentCallback(
+        uow_factory,
+        OrderNotifier(FakeNotificationsClient()),
+    )(
         PaymentCallbackCommand(
             payment_id="pay-2",
             order_id=order.id,

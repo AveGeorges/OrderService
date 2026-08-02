@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from application.ports.catalog import CatalogItem
+from application.services.order_notifications import OrderNotifier
 from application.usecases.create_order import CreateOrder, CreateOrderCommand
 from application.usecases.process_outbox_events import ProcessOutboxEvents
 from application.usecases.process_payment_callback import (
@@ -18,12 +19,17 @@ from domain.entities import EventType, OrderStatus, OutboxStatus
 from tests.fakes import (
     FakeCatalogClient,
     FakeEventPublisher,
+    FakeNotificationsClient,
     FakePaymentsClient,
     InMemoryUnitOfWork,
 )
 
 CALLBACK_URL = "http://order-service.svc:8000/api/orders/payment-callback"
 TOPIC = "student_system-order.events"
+
+
+def _notifier() -> OrderNotifier:
+    return OrderNotifier(FakeNotificationsClient())
 
 
 async def _new_paid_order(
@@ -45,11 +51,13 @@ async def _new_paid_order(
             ),
         },
     )
+    notifier = _notifier()
     order = await CreateOrder(
         uow_factory=uow_factory,
         catalog_client=catalog,
         payments_client=FakePaymentsClient(),
         payment_callback_url=CALLBACK_URL,
+        notifier=notifier,
     )(
         CreateOrderCommand(
             user_id="user-1",
@@ -58,7 +66,7 @@ async def _new_paid_order(
             idempotency_key=idempotency_key,
         ),
     )
-    await ProcessPaymentCallback(uow_factory)(
+    await ProcessPaymentCallback(uow_factory, notifier)(
         PaymentCallbackCommand(
             payment_id="pay-1",
             order_id=order.id,
@@ -90,7 +98,7 @@ async def test_f2_repeat_callback_does_not_duplicate_outbox() -> None:
     def uow_factory() -> InMemoryUnitOfWork:
         return InMemoryUnitOfWork(orders, outbox)
 
-    await ProcessPaymentCallback(uow_factory)(
+    await ProcessPaymentCallback(uow_factory, _notifier())(
         PaymentCallbackCommand(
             payment_id="pay-1",
             order_id=order.id,
@@ -146,6 +154,7 @@ async def test_f5_shipped_then_repeat_is_noop() -> None:
 
     process = ProcessShipmentEvent(
         lambda: InMemoryUnitOfWork(orders, outbox, inbox),
+        _notifier(),
     )
     command = ShipmentEventCommand(
         event_id="evt-ship-1",
@@ -172,6 +181,7 @@ async def test_f6_cancelled_then_repeat_is_noop() -> None:
 
     process = ProcessShipmentEvent(
         lambda: InMemoryUnitOfWork(orders, outbox, inbox),
+        _notifier(),
     )
     command = ShipmentEventCommand(
         event_id="evt-cancel-1",
@@ -206,6 +216,7 @@ async def test_full_path_paid_outbox_publish_then_shipped() -> None:
 
     await ProcessShipmentEvent(
         lambda: InMemoryUnitOfWork(orders, outbox, inbox),
+        _notifier(),
     )(
         ShipmentEventCommand(
             event_id=f"ship-{uuid4()}",

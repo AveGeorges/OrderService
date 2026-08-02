@@ -8,6 +8,7 @@ from application.exceptions import PaymentsServiceError
 from application.ports.catalog import CatalogClient
 from application.ports.payments import CreatePaymentRequest, PaymentsClient
 from application.ports.uow import UnitOfWork
+from application.services.order_notifications import OrderNotifier
 from domain.entities import Order, OrderStatus
 from domain.exceptions import InsufficientStockError
 
@@ -29,11 +30,13 @@ class CreateOrder:
         catalog_client: CatalogClient,
         payments_client: PaymentsClient,
         payment_callback_url: str,
+        notifier: OrderNotifier,
     ) -> None:
         self._uow_factory = uow_factory
         self._catalog = catalog_client
         self._payments = payments_client
         self._payment_callback_url = payment_callback_url
+        self._notifier = notifier
 
     async def __call__(self, command: CreateOrderCommand) -> Order:
         async with self._uow_factory() as uow:
@@ -72,6 +75,8 @@ class CreateOrder:
             await uow.commit()
             logger.info("Order created id=%s status=%s", saved.id, saved.status)
 
+        await self._notifier.notify_order(saved, OrderStatus.NEW)
+
         amount = (item.price * Decimal(command.quantity)).quantize(Decimal("0.01"))
         try:
             payment = await self._payments.create_payment(
@@ -96,6 +101,11 @@ class CreateOrder:
                     current.mark_cancelled()
                     saved = await uow.orders.update(current)
                     await uow.commit()
+                    await self._notifier.notify_status(
+                        saved.id,
+                        OrderStatus.CANCELLED,
+                        reason="ошибка оплаты",
+                    )
             raise
 
         return saved
