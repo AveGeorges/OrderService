@@ -169,14 +169,24 @@ class FakePaymentsClient(PaymentsClient):
 
 
 class FakeNotificationsClient(NotificationsClient):
-    def __init__(self, *, error: Exception | None = None) -> None:
-        self._error = error
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+        fail_times: int = 0,
+    ) -> None:
+        self._always_fail = error if fail_times == 0 else None
+        self._transient_error = error or RuntimeError("transient notify failure")
+        self._failures_left = fail_times
         self.calls: list[SendNotificationRequest] = []
 
     async def send(self, request: SendNotificationRequest) -> Notification:
         self.calls.append(request)
-        if self._error is not None:
-            raise self._error
+        if self._failures_left > 0:
+            self._failures_left -= 1
+            raise self._transient_error
+        if self._always_fail is not None:
+            raise self._always_fail
         return Notification(
             id="notification-1",
             user_id=request.user_id,

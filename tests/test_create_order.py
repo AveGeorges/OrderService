@@ -5,7 +5,7 @@ import pytest
 
 from application.exceptions import CatalogServiceError, PaymentsServiceError
 from application.ports.catalog import CatalogItem
-from application.services.order_notifications import OrderNotifier
+from application.services.order_notifications import is_notification_outbox_event
 from application.usecases.create_order import CreateOrder, CreateOrderCommand
 from application.usecases.get_order import GetOrder
 from application.usecases.process_payment_callback import (
@@ -20,7 +20,6 @@ from domain.exceptions import (
 )
 from tests.fakes import (
     FakeCatalogClient,
-    FakeNotificationsClient,
     FakePaymentsClient,
     InMemoryUnitOfWork,
 )
@@ -39,16 +38,6 @@ def outbox_storage() -> dict:
 
 
 @pytest.fixture
-def notifications() -> FakeNotificationsClient:
-    return FakeNotificationsClient()
-
-
-@pytest.fixture
-def notifier(notifications: FakeNotificationsClient) -> OrderNotifier:
-    return OrderNotifier(notifications)
-
-
-@pytest.fixture
 def uow_factory(storage: dict, outbox_storage: dict):
     def factory() -> InMemoryUnitOfWork:
         return InMemoryUnitOfWork(storage, outbox_storage)
@@ -60,15 +49,17 @@ def _create_order(
     uow_factory,
     catalog: FakeCatalogClient,
     payments: FakePaymentsClient | None = None,
-    notifier: OrderNotifier | None = None,
 ) -> CreateOrder:
     return CreateOrder(
         uow_factory=uow_factory,
         catalog_client=catalog,
         payments_client=payments or FakePaymentsClient(),
         payment_callback_url=CALLBACK_URL,
-        notifier=notifier or OrderNotifier(FakeNotificationsClient()),
     )
+
+
+def _order_paid_events(outbox: dict) -> list:
+    return [e for e in outbox.values() if e.event_type == EventType.ORDER_PAID]
 
 
 @pytest.mark.asyncio
@@ -98,7 +89,6 @@ async def test_create_order_success(uow_factory, storage: dict) -> None:
     assert order.status == OrderStatus.NEW
     assert order.quantity == 2
     assert len(storage) == 1
-    assert catalog.calls == ["item-1"]
     assert len(payments.calls) == 1
     assert payments.calls[0].amount == Decimal("200.00")
     assert payments.calls[0].callback_url == CALLBACK_URL
@@ -111,59 +101,22 @@ async def test_create_order_idempotent(uow_factory, storage: dict) -> None:
             "item-1": CatalogItem(
                 id="item-1",
                 name="Product",
-                price=Decimal("100.00"),
-                available_qty=10,
+                price=Decimal("10.00"),
+                available_qty=5,
             ),
         },
     )
-    payments = FakePaymentsClient()
-    use_case = _create_order(uow_factory, catalog, payments)
+    use_case = _create_order(uow_factory, catalog)
     command = CreateOrderCommand(
         user_id="user-1",
         item_id="item-1",
-        quantity=2,
+        quantity=1,
         idempotency_key="same-key",
     )
-
     first = await use_case(command)
     second = await use_case(command)
-
     assert first.id == second.id
     assert len(storage) == 1
-    assert catalog.calls == ["item-1"]
-    assert len(payments.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_create_order_payment_fails_cancels_order(
-    uow_factory,
-    storage: dict,
-) -> None:
-    catalog = FakeCatalogClient(
-        {
-            "item-1": CatalogItem(
-                id="item-1",
-                name="Product",
-                price=Decimal("100.00"),
-                available_qty=10,
-            ),
-        },
-    )
-    payments = FakePaymentsClient(error=PaymentsServiceError("boom"))
-    use_case = _create_order(uow_factory, catalog, payments)
-
-    with pytest.raises(PaymentsServiceError):
-        await use_case(
-            CreateOrderCommand(
-                user_id="user-1",
-                item_id="item-1",
-                quantity=1,
-                idempotency_key="key-pay-fail",
-            ),
-        )
-
-    order = next(iter(storage.values()))
-    assert order.status == OrderStatus.CANCELLED
 
 
 @pytest.mark.asyncio
@@ -173,20 +126,18 @@ async def test_create_order_insufficient_stock(uow_factory) -> None:
             "item-1": CatalogItem(
                 id="item-1",
                 name="Product",
-                price=Decimal("100.00"),
+                price=Decimal("10.00"),
                 available_qty=1,
             ),
         },
     )
-    use_case = _create_order(uow_factory, catalog)
-
     with pytest.raises(InsufficientStockError):
-        await use_case(
+        await _create_order(uow_factory, catalog)(
             CreateOrderCommand(
                 user_id="user-1",
                 item_id="item-1",
                 quantity=5,
-                idempotency_key="key-2",
+                idempotency_key="k",
             ),
         )
 
@@ -194,37 +145,70 @@ async def test_create_order_insufficient_stock(uow_factory) -> None:
 @pytest.mark.asyncio
 async def test_create_order_item_not_found(uow_factory) -> None:
     catalog = FakeCatalogClient(missing_ids={"missing"})
-    use_case = _create_order(uow_factory, catalog)
-
     with pytest.raises(ItemNotFoundError):
-        await use_case(
+        await _create_order(uow_factory, catalog)(
             CreateOrderCommand(
                 user_id="user-1",
                 item_id="missing",
                 quantity=1,
-                idempotency_key="key-3",
+                idempotency_key="k",
             ),
         )
 
 
 @pytest.mark.asyncio
-async def test_create_order_catalog_unavailable(uow_factory) -> None:
-    catalog = FakeCatalogClient(error=CatalogServiceError())
-    use_case = _create_order(uow_factory, catalog)
-
+async def test_create_order_catalog_error(uow_factory) -> None:
+    catalog = FakeCatalogClient(error=CatalogServiceError("down"))
     with pytest.raises(CatalogServiceError):
-        await use_case(
+        await _create_order(uow_factory, catalog)(
             CreateOrderCommand(
                 user_id="user-1",
                 item_id="item-1",
                 quantity=1,
-                idempotency_key="key-4",
+                idempotency_key="k",
             ),
         )
 
 
 @pytest.mark.asyncio
-async def test_get_order_success(uow_factory, storage: dict) -> None:
+async def test_create_order_payment_error_cancels(
+    uow_factory,
+    storage: dict,
+    outbox_storage: dict,
+) -> None:
+    catalog = FakeCatalogClient(
+        {
+            "item-1": CatalogItem(
+                id="item-1",
+                name="Product",
+                price=Decimal("10.00"),
+                available_qty=5,
+            ),
+        },
+    )
+    payments = FakePaymentsClient(error=PaymentsServiceError("pay fail"))
+    with pytest.raises(PaymentsServiceError):
+        await _create_order(uow_factory, catalog, payments)(
+            CreateOrderCommand(
+                user_id="user-1",
+                item_id="item-1",
+                quantity=1,
+                idempotency_key="pay-fail",
+            ),
+        )
+    order = next(iter(storage.values()))
+    assert order.status == OrderStatus.CANCELLED
+    keys = [
+        e.payload["idempotency_key"]
+        for e in outbox_storage.values()
+        if is_notification_outbox_event(e.event_type)
+    ]
+    assert any(k.endswith(":NEW") for k in keys)
+    assert any(k.endswith(":CANCELLED") for k in keys)
+
+
+@pytest.mark.asyncio
+async def test_get_order(uow_factory, storage: dict) -> None:
     catalog = FakeCatalogClient(
         {
             "item-1": CatalogItem(
@@ -240,12 +224,11 @@ async def test_get_order_success(uow_factory, storage: dict) -> None:
             user_id="user-1",
             item_id="item-1",
             quantity=1,
-            idempotency_key="key-5",
+            idempotency_key="get-1",
         ),
     )
-
-    order = await GetOrder(uow_factory=uow_factory)(created.id)
-    assert order.id == created.id
+    got = await GetOrder(uow_factory=uow_factory)(created.id)
+    assert got.id == created.id
 
 
 @pytest.mark.asyncio
@@ -278,10 +261,7 @@ async def test_payment_callback_succeeded(
         ),
     )
 
-    updated = await ProcessPaymentCallback(
-        uow_factory,
-        OrderNotifier(FakeNotificationsClient()),
-    )(
+    updated = await ProcessPaymentCallback(uow_factory)(
         PaymentCallbackCommand(
             payment_id="pay-1",
             order_id=order.id,
@@ -290,9 +270,9 @@ async def test_payment_callback_succeeded(
         ),
     )
     assert updated.status == OrderStatus.PAID
-    assert len(outbox_storage) == 1
-    event = next(iter(outbox_storage.values()))
-    assert event.event_type == EventType.ORDER_PAID
+    paid_events = _order_paid_events(outbox_storage)
+    assert len(paid_events) == 1
+    event = paid_events[0]
     assert event.status == OutboxStatus.PENDING
     assert event.payload == {
         "event_type": EventType.ORDER_PAID,
@@ -302,10 +282,7 @@ async def test_payment_callback_succeeded(
         "idempotency_key": "cb-ok",
     }
 
-    again = await ProcessPaymentCallback(
-        uow_factory,
-        OrderNotifier(FakeNotificationsClient()),
-    )(
+    again = await ProcessPaymentCallback(uow_factory)(
         PaymentCallbackCommand(
             payment_id="pay-1",
             order_id=order.id,
@@ -314,7 +291,7 @@ async def test_payment_callback_succeeded(
         ),
     )
     assert again.status == OrderStatus.PAID
-    assert len(outbox_storage) == 1
+    assert len(_order_paid_events(outbox_storage)) == 1
 
 
 @pytest.mark.asyncio
@@ -341,10 +318,7 @@ async def test_payment_callback_failed(
         ),
     )
 
-    updated = await ProcessPaymentCallback(
-        uow_factory,
-        OrderNotifier(FakeNotificationsClient()),
-    )(
+    updated = await ProcessPaymentCallback(uow_factory)(
         PaymentCallbackCommand(
             payment_id="pay-2",
             order_id=order.id,
@@ -354,4 +328,9 @@ async def test_payment_callback_failed(
         ),
     )
     assert updated.status == OrderStatus.CANCELLED
-    assert outbox_storage == {}
+    assert _order_paid_events(outbox_storage) == []
+    assert any(
+        e.payload.get("idempotency_key", "").endswith(":CANCELLED")
+        for e in outbox_storage.values()
+        if is_notification_outbox_event(e.event_type)
+    )

@@ -1,15 +1,13 @@
 from uuid import uuid4
 
-import pytest
-
-from application.exceptions import NotificationsServiceError
 from application.services.order_notifications import (
-    OrderNotifier,
+    build_notification_outbox_event,
+    is_notification_outbox_event,
+    notification_event_type,
     notification_idempotency_key,
     notification_message,
 )
-from domain.entities import OrderStatus
-from tests.fakes import FakeNotificationsClient
+from domain.entities import OrderStatus, OutboxStatus
 
 
 def test_notification_messages() -> None:
@@ -37,39 +35,19 @@ def test_idempotency_key_stable() -> None:
     )
 
 
-@pytest.mark.asyncio
-async def test_notifier_sends_request() -> None:
-    client = FakeNotificationsClient()
-    notifier = OrderNotifier(client)
+def test_build_notification_outbox_event() -> None:
     order_id = uuid4()
-
-    ok = await notifier.notify_status(
+    event = build_notification_outbox_event(
         order_id,
+        "user-1",
         OrderStatus.NEW,
-        user_id="user-1",
     )
-
-    assert ok is True
-    assert len(client.calls) == 1
-    call = client.calls[0]
-    assert call.user_id == "user-1"
-    assert call.reference_id == str(order_id)
-    assert call.idempotency_key == f"{order_id}:NEW"
-    assert call.message == "NEW: Ваш заказ создан и ожидает оплаты"
-
-
-@pytest.mark.asyncio
-async def test_notifier_swallows_errors() -> None:
-    client = FakeNotificationsClient(
-        error=NotificationsServiceError("down"),
-    )
-    notifier = OrderNotifier(client)
-
-    ok = await notifier.notify_status(
-        uuid4(),
-        OrderStatus.PAID,
-        user_id="user-1",
-    )
-
-    assert ok is False
-    assert len(client.calls) == 1
+    assert event.event_type == notification_event_type(OrderStatus.NEW)
+    assert is_notification_outbox_event(event.event_type)
+    assert event.status == OutboxStatus.PENDING
+    assert event.payload == {
+        "user_id": "user-1",
+        "message": "NEW: Ваш заказ создан и ожидает оплаты",
+        "reference_id": str(order_id),
+        "idempotency_key": f"{order_id}:NEW",
+    }

@@ -5,10 +5,10 @@ from fastapi.testclient import TestClient
 
 from app import create_app
 from application.ports.catalog import CatalogItem
-from application.services.order_notifications import OrderNotifier
 from application.usecases.create_order import CreateOrder
 from application.usecases.get_order import GetOrder
 from application.usecases.process_payment_callback import ProcessPaymentCallback
+from domain.entities import EventType
 from presentation.api.dependencies import (
     get_create_order_use_case,
     get_get_order_use_case,
@@ -17,7 +17,6 @@ from presentation.api.dependencies import (
 from settings import Settings
 from tests.fakes import (
     FakeCatalogClient,
-    FakeNotificationsClient,
     FakePaymentsClient,
     InMemoryUnitOfWork,
 )
@@ -50,7 +49,6 @@ def _build_client() -> tuple[
         missing_ids={"missing-item"},
     )
     payments = FakePaymentsClient()
-    notifier = OrderNotifier(FakeNotificationsClient())
 
     def uow_factory() -> InMemoryUnitOfWork:
         return InMemoryUnitOfWork(storage, outbox_storage)  # type: ignore[arg-type]
@@ -68,13 +66,12 @@ def _build_client() -> tuple[
         catalog_client=catalog,
         payments_client=payments,
         payment_callback_url="http://order-service.svc:8000/api/orders/payment-callback",
-        notifier=notifier,
     )
     app.dependency_overrides[get_get_order_use_case] = lambda: GetOrder(
         uow_factory=uow_factory,
     )
     app.dependency_overrides[get_process_payment_callback_use_case] = lambda: (
-        ProcessPaymentCallback(uow_factory=uow_factory, notifier=notifier)
+        ProcessPaymentCallback(uow_factory=uow_factory)
     )
     return TestClient(app), storage, outbox_storage, catalog, payments
 
@@ -209,10 +206,11 @@ def test_payment_callback_succeeded_200() -> None:
 
         order = client.get(f"/api/orders/{created['id']}").json()
         assert order["status"] == "PAID"
-        assert len(outbox_storage) == 1
-        event = next(iter(outbox_storage.values()))
-        assert event.event_type == "order.paid"
-        assert event.payload["order_id"] == created["id"]
+        paid_events = [
+            e for e in outbox_storage.values() if e.event_type == EventType.ORDER_PAID
+        ]
+        assert len(paid_events) == 1
+        assert paid_events[0].payload["order_id"] == created["id"]
 
         # idempotent repeat
         again = client.post(
@@ -227,7 +225,16 @@ def test_payment_callback_succeeded_200() -> None:
         )
         assert again.status_code == 200
         assert client.get(f"/api/orders/{created['id']}").json()["status"] == "PAID"
-        assert len(outbox_storage) == 1
+        assert (
+            len(
+                [
+                    e
+                    for e in outbox_storage.values()
+                    if e.event_type == EventType.ORDER_PAID
+                ],
+            )
+            == 1
+        )
 
 
 def test_payment_callback_failed_cancels() -> None:

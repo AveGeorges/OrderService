@@ -9,7 +9,6 @@ import logging
 from aiokafka import AIOKafkaConsumer
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from application.services.order_notifications import OrderNotifier
 from application.usecases.process_outbox_events import ProcessOutboxEvents
 from application.usecases.process_shipment_event import (
     ProcessShipmentEvent,
@@ -29,30 +28,37 @@ async def outbox_worker_loop(
     stop: asyncio.Event,
 ) -> None:
     publisher = AIOKafkaEventPublisher(settings.kafka_bootstrap_servers)
+    notifications = HttpNotificationsClient(
+        base_url=settings.capashino_base_url,
+        api_token=settings.api_token,
+    )
     process = ProcessOutboxEvents(
         uow_factory=lambda: SQLAlchemyUnitOfWork(session_factory),
         publisher=publisher,
+        notifications=notifications,
         topic=settings.kafka_order_events_topic,
         batch_size=settings.outbox_batch_size,
         max_retries=settings.outbox_max_retries,
+        notify_attempts=settings.notification_send_attempts,
+        notify_retry_delay_seconds=settings.notification_retry_delay_seconds,
     )
 
-    while not stop.is_set():
-        try:
-            await publisher.start()
-            break
-        except Exception:
-            logger.exception("Outbox worker: Kafka connect failed, retry in 5s")
+    async def _connect_kafka() -> None:
+        while not stop.is_set():
             try:
-                await asyncio.wait_for(stop.wait(), timeout=5)
-            except TimeoutError:
-                pass
-    if stop.is_set():
-        return
+                await publisher.start()
+                logger.info("Outbox Kafka publisher connected")
+                return
+            except Exception:
+                logger.exception("Outbox worker: Kafka connect failed, retry in 5s")
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=5)
+                except TimeoutError:
+                    pass
 
+    connect_task = asyncio.create_task(_connect_kafka(), name="outbox-kafka-connect")
     logger.info(
-        "Outbox worker started topic=%s poll=%ss",
-        settings.kafka_order_events_topic,
+        "Outbox worker started poll=%ss (notifications+kafka)",
         settings.outbox_poll_interval_seconds,
     )
     try:
@@ -72,6 +78,8 @@ async def outbox_worker_loop(
                 except TimeoutError:
                     pass
     finally:
+        connect_task.cancel()
+        await asyncio.gather(connect_task, return_exceptions=True)
         await publisher.stop()
         logger.info("Outbox worker stopped")
 
@@ -81,15 +89,8 @@ async def shipment_consumer_loop(
     settings: Settings,
     stop: asyncio.Event,
 ) -> None:
-    notifier = OrderNotifier(
-        HttpNotificationsClient(
-            base_url=settings.capashino_base_url,
-            api_token=settings.api_token,
-        ),
-    )
     process = ProcessShipmentEvent(
         uow_factory=lambda: SQLAlchemyUnitOfWork(session_factory),
-        notifier=notifier,
     )
 
     consumer: AIOKafkaConsumer | None = None

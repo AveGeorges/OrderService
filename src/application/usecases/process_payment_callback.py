@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from application.ports.uow import UnitOfWork
-from application.services.order_notifications import OrderNotifier
+from application.services.order_notifications import build_notification_outbox_for_order
 from domain.entities import EventType, Order, OrderStatus, OutboxEvent
 from domain.exceptions import OrderNotFoundError
 
@@ -21,13 +21,8 @@ class PaymentCallbackCommand:
 
 
 class ProcessPaymentCallback:
-    def __init__(
-        self,
-        uow_factory: Callable[[], UnitOfWork],
-        notifier: OrderNotifier,
-    ) -> None:
+    def __init__(self, uow_factory: Callable[[], UnitOfWork]) -> None:
         self._uow_factory = uow_factory
-        self._notifier = notifier
 
     async def __call__(self, command: PaymentCallbackCommand) -> Order:
         async with self._uow_factory() as uow:
@@ -84,6 +79,14 @@ class ProcessPaymentCallback:
             updated = await uow.orders.update(order)
             if emit_order_paid:
                 await uow.outbox.add(_order_paid_outbox_event(updated))
+            if notify_status is not None:
+                await uow.outbox.add(
+                    build_notification_outbox_for_order(
+                        updated,
+                        notify_status,
+                        reason=notify_reason,
+                    ),
+                )
             await uow.commit()
             logger.info(
                 "Payment callback applied order_id=%s status=%s payment_id=%s",
@@ -91,15 +94,7 @@ class ProcessPaymentCallback:
                 updated.status,
                 command.payment_id,
             )
-
-        if notify_status is not None:
-            await self._notifier.notify_status(
-                updated.id,
-                notify_status,
-                user_id=updated.user_id,
-                reason=notify_reason,
-            )
-        return updated
+            return updated
 
 
 def _order_paid_outbox_event(order: Order) -> OutboxEvent:

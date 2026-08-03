@@ -4,7 +4,6 @@ from decimal import Decimal
 from uuid import uuid4
 
 from application.ports.catalog import CatalogItem
-from application.services.order_notifications import OrderNotifier
 from application.usecases.create_order import CreateOrder, CreateOrderCommand
 from application.usecases.process_outbox_events import ProcessOutboxEvents
 from application.usecases.process_payment_callback import (
@@ -28,8 +27,8 @@ CALLBACK_URL = "http://order-service.svc:8000/api/orders/payment-callback"
 TOPIC = "student_system-order.events"
 
 
-def _notifier() -> OrderNotifier:
-    return OrderNotifier(FakeNotificationsClient())
+def _order_paid_events(outbox: dict) -> list:
+    return [e for e in outbox.values() if e.event_type == EventType.ORDER_PAID]
 
 
 async def _new_paid_order(
@@ -51,13 +50,11 @@ async def _new_paid_order(
             ),
         },
     )
-    notifier = _notifier()
     order = await CreateOrder(
         uow_factory=uow_factory,
         catalog_client=catalog,
         payments_client=FakePaymentsClient(),
         payment_callback_url=CALLBACK_URL,
-        notifier=notifier,
     )(
         CreateOrderCommand(
             user_id="user-1",
@@ -66,7 +63,7 @@ async def _new_paid_order(
             idempotency_key=idempotency_key,
         ),
     )
-    await ProcessPaymentCallback(uow_factory, notifier)(
+    await ProcessPaymentCallback(uow_factory)(
         PaymentCallbackCommand(
             payment_id="pay-1",
             order_id=order.id,
@@ -83,9 +80,9 @@ async def test_f1_first_paid_writes_single_outbox_order_paid() -> None:
     order = await _new_paid_order(orders, outbox)
 
     assert orders[order.id].status == OrderStatus.PAID
-    assert len(outbox) == 1
-    event = next(iter(outbox.values()))
-    assert event.event_type == EventType.ORDER_PAID
+    paid = _order_paid_events(outbox)
+    assert len(paid) == 1
+    event = paid[0]
     assert event.status == OutboxStatus.PENDING
     assert event.payload["order_id"] == str(order.id)
 
@@ -98,7 +95,7 @@ async def test_f2_repeat_callback_does_not_duplicate_outbox() -> None:
     def uow_factory() -> InMemoryUnitOfWork:
         return InMemoryUnitOfWork(orders, outbox)
 
-    await ProcessPaymentCallback(uow_factory, _notifier())(
+    await ProcessPaymentCallback(uow_factory)(
         PaymentCallbackCommand(
             payment_id="pay-1",
             order_id=order.id,
@@ -106,7 +103,7 @@ async def test_f2_repeat_callback_does_not_duplicate_outbox() -> None:
             amount="10.00",
         ),
     )
-    assert len(outbox) == 1
+    assert len(_order_paid_events(outbox)) == 1
 
 
 async def test_f3_outbox_worker_marks_sent() -> None:
@@ -118,11 +115,12 @@ async def test_f3_outbox_worker_marks_sent() -> None:
     processed = await ProcessOutboxEvents(
         uow_factory=lambda: InMemoryUnitOfWork(orders, outbox),
         publisher=publisher,
+        notifications=FakeNotificationsClient(),
         topic=TOPIC,
     )()
 
-    assert processed == 1
-    event = next(iter(outbox.values()))
+    assert processed == len(outbox)
+    event = _order_paid_events(outbox)[0]
     assert event.status == OutboxStatus.SENT
     assert publisher.calls[0][1] == str(order.id)
 
@@ -136,11 +134,12 @@ async def test_f4_publish_error_keeps_pending_and_increments_retry() -> None:
     await ProcessOutboxEvents(
         uow_factory=lambda: InMemoryUnitOfWork(orders, outbox),
         publisher=publisher,
+        notifications=FakeNotificationsClient(),
         topic=TOPIC,
         max_retries=5,
     )()
 
-    event = next(iter(outbox.values()))
+    event = _order_paid_events(outbox)[0]
     assert event.status == OutboxStatus.PENDING
     assert event.retry_count == 1
     assert "kafka unavailable" in (event.last_error or "")
@@ -154,7 +153,6 @@ async def test_f5_shipped_then_repeat_is_noop() -> None:
 
     process = ProcessShipmentEvent(
         lambda: InMemoryUnitOfWork(orders, outbox, inbox),
-        _notifier(),
     )
     command = ShipmentEventCommand(
         event_id="evt-ship-1",
@@ -181,7 +179,6 @@ async def test_f6_cancelled_then_repeat_is_noop() -> None:
 
     process = ProcessShipmentEvent(
         lambda: InMemoryUnitOfWork(orders, outbox, inbox),
-        _notifier(),
     )
     command = ShipmentEventCommand(
         event_id="evt-cancel-1",
@@ -210,13 +207,13 @@ async def test_full_path_paid_outbox_publish_then_shipped() -> None:
     await ProcessOutboxEvents(
         uow_factory=lambda: InMemoryUnitOfWork(orders, outbox, inbox),
         publisher=publisher,
+        notifications=FakeNotificationsClient(),
         topic=TOPIC,
     )()
-    assert next(iter(outbox.values())).status == OutboxStatus.SENT
+    assert _order_paid_events(outbox)[0].status == OutboxStatus.SENT
 
     await ProcessShipmentEvent(
         lambda: InMemoryUnitOfWork(orders, outbox, inbox),
-        _notifier(),
     )(
         ShipmentEventCommand(
             event_id=f"ship-{uuid4()}",

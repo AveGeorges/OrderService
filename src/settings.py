@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     outbox_poll_interval_seconds: float = 2.0
     outbox_batch_size: int = 100
     outbox_max_retries: int = 5
+    notification_send_attempts: int = 3
+    notification_retry_delay_seconds: float = 0.5
 
     run_kafka_workers_in_api: bool = True
 

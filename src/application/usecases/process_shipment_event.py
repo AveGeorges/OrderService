@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from application.ports.uow import UnitOfWork
-from application.services.order_notifications import OrderNotifier
+from application.services.order_notifications import build_notification_outbox_for_order
 from domain.entities import EventType, InboxEvent, Order, OrderStatus
 from domain.exceptions import OrderNotFoundError
 
@@ -24,20 +24,11 @@ class ShipmentEventCommand:
 class ProcessShipmentEvent:
     """Apply Shipping events idempotently via inbox."""
 
-    def __init__(
-        self,
-        uow_factory: Callable[[], UnitOfWork],
-        notifier: OrderNotifier,
-    ) -> None:
+    def __init__(self, uow_factory: Callable[[], UnitOfWork]) -> None:
         self._uow_factory = uow_factory
-        self._notifier = notifier
 
     async def __call__(self, command: ShipmentEventCommand) -> bool:
         """Return True if event was applied, False if duplicate (already in inbox)."""
-        notify_status: OrderStatus | None = None
-        notify_reason: str | None = None
-        notify_user_id: str | None = None
-
         async with self._uow_factory() as uow:
             inserted = await uow.inbox.add(
                 InboxEvent(
@@ -61,11 +52,17 @@ class ProcessShipmentEvent:
             changed = _apply_shipment_status(order, command)
             if changed:
                 await uow.orders.update(order)
-                notify_status = order.status
-                notify_user_id = order.user_id
-                if notify_status == OrderStatus.CANCELLED:
-                    reason = command.payload.get("reason")
-                    notify_reason = str(reason) if reason else None
+                reason = None
+                if order.status == OrderStatus.CANCELLED:
+                    raw_reason = command.payload.get("reason")
+                    reason = str(raw_reason) if raw_reason else None
+                await uow.outbox.add(
+                    build_notification_outbox_for_order(
+                        order,
+                        order.status,
+                        reason=reason,
+                    ),
+                )
 
             await uow.commit()
             logger.info(
@@ -75,15 +72,7 @@ class ProcessShipmentEvent:
                 command.event_type,
                 order.status,
             )
-
-        if notify_status is not None and notify_user_id is not None:
-            await self._notifier.notify_status(
-                command.order_id,
-                notify_status,
-                user_id=notify_user_id,
-                reason=notify_reason,
-            )
-        return True
+            return True
 
 
 def build_shipment_event_id(payload: dict[str, Any]) -> str:

@@ -4,15 +4,12 @@ from functools import lru_cache
 from fastapi import Request
 
 from application.ports.catalog import CatalogClient
-from application.ports.notifications import NotificationsClient
 from application.ports.payments import PaymentsClient
 from application.ports.uow import UnitOfWork
-from application.services.order_notifications import OrderNotifier
 from application.usecases.create_order import CreateOrder
 from application.usecases.get_order import GetOrder
 from application.usecases.process_payment_callback import ProcessPaymentCallback
 from infrastructure.http.catalog import HttpCatalogClient
-from infrastructure.http.notifications import HttpNotificationsClient
 from infrastructure.http.payments import HttpPaymentsClient
 from infrastructure.persistence.uow import SQLAlchemyUnitOfWork
 from settings import Settings, get_settings
@@ -48,18 +45,6 @@ def get_payments_client(request: Request) -> PaymentsClient:
     )
 
 
-def get_notifications_client(request: Request) -> NotificationsClient:
-    settings: Settings = request.app.state.settings
-    return HttpNotificationsClient(
-        base_url=settings.capashino_base_url,
-        api_token=settings.api_token,
-    )
-
-
-def get_order_notifier(request: Request) -> OrderNotifier:
-    return OrderNotifier(get_notifications_client(request))
-
-
 def get_create_order_use_case(request: Request) -> CreateOrder:
     settings: Settings = request.app.state.settings
     return CreateOrder(
@@ -67,7 +52,6 @@ def get_create_order_use_case(request: Request) -> CreateOrder:
         catalog_client=get_catalog_client(request),
         payments_client=get_payments_client(request),
         payment_callback_url=settings.payment_callback_url,
-        notifier=get_order_notifier(request),
     )
 
 
@@ -78,7 +62,4 @@ def get_get_order_use_case(request: Request) -> GetOrder:
 def get_process_payment_callback_use_case(
     request: Request,
 ) -> ProcessPaymentCallback:
-    return ProcessPaymentCallback(
-        uow_factory=get_uow_factory(request),
-        notifier=get_order_notifier(request),
-    )
+    return ProcessPaymentCallback(uow_factory=get_uow_factory(request))
