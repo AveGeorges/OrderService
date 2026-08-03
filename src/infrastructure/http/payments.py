@@ -60,8 +60,10 @@ class HttpPaymentsClient(PaymentsClient):
         data = response.json()
         return Payment(
             id=str(data["id"]),
+            user_id=str(data["user_id"]),
             order_id=str(data["order_id"]),
             amount=Decimal(str(data["amount"])),
             status=str(data["status"]),
             idempotency_key=str(data["idempotency_key"]),
+            created_at=str(data["created_at"]),
         )

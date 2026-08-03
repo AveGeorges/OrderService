@@ -159,10 +159,12 @@ class FakePaymentsClient(PaymentsClient):
             raise self._error
         return Payment(
             id="payment-1",
+            user_id="user-1",
             order_id=str(request.order_id),
             amount=request.amount,
             status="pending",
             idempotency_key=request.idempotency_key,
+            created_at="2024-01-01T00:00:00Z",
         )
 
 

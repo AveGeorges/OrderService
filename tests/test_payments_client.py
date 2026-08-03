@@ -46,7 +46,9 @@ async def test_http_payments_create_success() -> None:
         )
 
     assert payment.id == "payment-1"
+    assert payment.user_id == "user-1"
     assert payment.status == "pending"
+    assert payment.created_at == "2024-01-01T00:00:00Z"
 
 
 @pytest.mark.asyncio

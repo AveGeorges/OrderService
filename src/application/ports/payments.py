@@ -15,10 +15,12 @@ class CreatePaymentRequest:
 @dataclass(frozen=True, slots=True)
 class Payment:
     id: str
+    user_id: str
     order_id: str
     amount: Decimal
     status: str
     idempotency_key: str
+    created_at: str
 
 
 class PaymentsClient(ABC):
