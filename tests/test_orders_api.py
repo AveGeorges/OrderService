@@ -60,6 +60,7 @@ def _build_client() -> tuple[
             database_auto_create=False,
             api_token="test-token",
             order_service_internal_url="http://order-service.svc:8000",
+            run_kafka_workers_in_api=False,
         ),
     )
     app.dependency_overrides[get_create_order_use_case] = lambda: CreateOrder(

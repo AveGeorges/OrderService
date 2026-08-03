@@ -52,6 +52,8 @@ docker compose --profile kafka up --build
 
 Healthcheck: `GET /health`
 
+При `KAFKA_BOOTSTRAP_SERVERS` API сам поднимает outbox worker и shipment consumer
+
 ## Переменные окружения
 
 | Переменная | Описание |
@@ -67,6 +69,7 @@ Healthcheck: `GET /health`
 | `API_TOKEN` | Токен для заголовка `X-API-Key` (Catalog / Payments / Notifications) |
 | `ORDER_SERVICE_INTERNAL_URL` | Internal DNS сервиса для payment callback |
 | `KAFKA_BOOTSTRAP_SERVERS` | Брокер Kafka (в LMS: `kafka.kafka.svc.cluster.local:9092`) |
+| `RUN_KAFKA_WORKERS_IN_API` | Крутить outbox+consumer внутри API (`true` по умолчанию, для LMS) |
 | `APP_ROLE` | Что запускает контейнер: `api` / `outbox-worker` / `shipment-consumer` |
 | `KAFKA_ORDER_EVENTS_TOPIC` | Топик исходящих событий заказа (по умолчанию `student_system-order.events`) |
 | `KAFKA_SHIPMENT_EVENTS_TOPIC` | Топик входящих событий доставки |

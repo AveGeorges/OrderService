@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     outbox_batch_size: int = 100
     outbox_max_retries: int = 5
 
+    run_kafka_workers_in_api: bool = True
+
     @property
     def database_url(self) -> str:
         if self.database_url_override:

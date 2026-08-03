@@ -6,10 +6,8 @@ import asyncio
 import logging
 import signal
 
-from application.usecases.process_outbox_events import ProcessOutboxEvents
-from infrastructure.messaging.kafka_publisher import AIOKafkaEventPublisher
+from infrastructure.messaging.workers import outbox_worker_loop
 from infrastructure.persistence.database import create_engine, create_session_factory
-from infrastructure.persistence.uow import SQLAlchemyUnitOfWork
 from settings import get_settings
 
 logging.basicConfig(
@@ -26,15 +24,6 @@ async def run() -> None:
 
     engine = create_engine(settings.database_url)
     session_factory = create_session_factory(engine)
-    publisher = AIOKafkaEventPublisher(settings.kafka_bootstrap_servers)
-    process = ProcessOutboxEvents(
-        uow_factory=lambda: SQLAlchemyUnitOfWork(session_factory),
-        publisher=publisher,
-        topic=settings.kafka_order_events_topic,
-        batch_size=settings.outbox_batch_size,
-        max_retries=settings.outbox_max_retries,
-    )
-
     stop = asyncio.Event()
 
     def _request_stop() -> None:
@@ -46,37 +35,12 @@ async def run() -> None:
         try:
             loop.add_signal_handler(sig, _request_stop)
         except NotImplementedError:
-            # Windows: signal handlers in asyncio are limited
             signal.signal(sig, lambda *_: _request_stop())
 
-    await publisher.start()
-    logger.info(
-        "Outbox worker started topic=%s poll=%ss batch=%s",
-        settings.kafka_order_events_topic,
-        settings.outbox_poll_interval_seconds,
-        settings.outbox_batch_size,
-    )
-
     try:
-        while not stop.is_set():
-            try:
-                processed = await process()
-            except Exception:
-                logger.exception("Outbox poll failed")
-                processed = 0
-
-            if processed == 0:
-                try:
-                    await asyncio.wait_for(
-                        stop.wait(),
-                        timeout=settings.outbox_poll_interval_seconds,
-                    )
-                except TimeoutError:
-                    pass
+        await outbox_worker_loop(session_factory, settings, stop)
     finally:
-        await publisher.stop()
         await engine.dispose()
-        logger.info("Outbox worker stopped")
 
 
 def main() -> None:
