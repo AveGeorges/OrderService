@@ -30,6 +30,7 @@ class HttpNotificationsClient(NotificationsClient):
         url = f"{self._base_url}/api/notifications"
         headers = {"X-API-Key": self._api_token}
         payload = {
+            "user_id": request.user_id,
             "message": request.message,
             "reference_id": request.reference_id,
             "idempotency_key": request.idempotency_key,

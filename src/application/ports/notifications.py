@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class SendNotificationRequest:
+    user_id: str
     message: str
     reference_id: str
     idempotency_key: str

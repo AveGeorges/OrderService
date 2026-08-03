@@ -179,7 +179,7 @@ class FakeNotificationsClient(NotificationsClient):
             raise self._error
         return Notification(
             id="notification-1",
-            user_id="user-1",
+            user_id=request.user_id,
             message=request.message,
             reference_id=request.reference_id,
         )

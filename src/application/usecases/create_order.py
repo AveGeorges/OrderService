@@ -104,6 +104,7 @@ class CreateOrder:
                     await self._notifier.notify_status(
                         saved.id,
                         OrderStatus.CANCELLED,
+                        user_id=saved.user_id,
                         reason="ошибка оплаты",
                     )
             raise

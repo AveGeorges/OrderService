@@ -36,6 +36,7 @@ class ProcessShipmentEvent:
         """Return True if event was applied, False if duplicate (already in inbox)."""
         notify_status: OrderStatus | None = None
         notify_reason: str | None = None
+        notify_user_id: str | None = None
 
         async with self._uow_factory() as uow:
             inserted = await uow.inbox.add(
@@ -61,6 +62,7 @@ class ProcessShipmentEvent:
             if changed:
                 await uow.orders.update(order)
                 notify_status = order.status
+                notify_user_id = order.user_id
                 if notify_status == OrderStatus.CANCELLED:
                     reason = command.payload.get("reason")
                     notify_reason = str(reason) if reason else None
@@ -74,10 +76,11 @@ class ProcessShipmentEvent:
                 order.status,
             )
 
-        if notify_status is not None:
+        if notify_status is not None and notify_user_id is not None:
             await self._notifier.notify_status(
                 command.order_id,
                 notify_status,
+                user_id=notify_user_id,
                 reason=notify_reason,
             )
         return True

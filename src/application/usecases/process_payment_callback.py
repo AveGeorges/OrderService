@@ -96,6 +96,7 @@ class ProcessPaymentCallback:
             await self._notifier.notify_status(
                 updated.id,
                 notify_status,
+                user_id=updated.user_id,
                 reason=notify_reason,
             )
         return updated

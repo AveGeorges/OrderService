@@ -14,10 +14,10 @@ from domain.entities import Order, OrderStatus
 logger = logging.getLogger(__name__)
 
 _MESSAGES: dict[OrderStatus, str] = {
-    OrderStatus.NEW: "Ваш заказ создан и ожидает оплаты",
-    OrderStatus.PAID: "Ваш заказ успешно оплачен и готов к отправке",
-    OrderStatus.SHIPPED: "Ваш заказ отправлен в доставку",
-    OrderStatus.CANCELLED: "Ваш заказ отменен. Причина: {reason}",
+    OrderStatus.NEW: "NEW: Ваш заказ создан и ожидает оплаты",
+    OrderStatus.PAID: "PAID: Ваш заказ успешно оплачен и готов к отправке",
+    OrderStatus.SHIPPED: "SHIPPED: Ваш заказ отправлен в доставку",
+    OrderStatus.CANCELLED: "CANCELLED: Ваш заказ отменен. Причина: {reason}",
 }
 
 _DEFAULT_CANCEL_REASON = "не указана"
@@ -49,10 +49,12 @@ class OrderNotifier:
         order_id: UUID,
         status: OrderStatus,
         *,
+        user_id: str,
         reason: str | None = None,
     ) -> bool:
         """Return True if sent, False if Notifications failed (logged)."""
         request = SendNotificationRequest(
+            user_id=user_id,
             message=notification_message(status, reason=reason),
             reference_id=str(order_id),
             idempotency_key=notification_idempotency_key(order_id, status),
@@ -84,4 +86,9 @@ class OrderNotifier:
         reason: str | None = None,
     ) -> bool:
         target = status if status is not None else order.status
-        return await self.notify_status(order.id, target, reason=reason)
+        return await self.notify_status(
+            order.id,
+            target,
+            user_id=order.user_id,
+            reason=reason,
+        )

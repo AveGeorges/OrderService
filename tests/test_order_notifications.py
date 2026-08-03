@@ -14,19 +14,19 @@ from tests.fakes import FakeNotificationsClient
 
 def test_notification_messages() -> None:
     assert notification_message(OrderStatus.NEW) == (
-        "Ваш заказ создан и ожидает оплаты"
+        "NEW: Ваш заказ создан и ожидает оплаты"
     )
     assert notification_message(OrderStatus.PAID) == (
-        "Ваш заказ успешно оплачен и готов к отправке"
+        "PAID: Ваш заказ успешно оплачен и готов к отправке"
     )
     assert notification_message(OrderStatus.SHIPPED) == (
-        "Ваш заказ отправлен в доставку"
+        "SHIPPED: Ваш заказ отправлен в доставку"
     )
     assert notification_message(OrderStatus.CANCELLED, reason="нет товара") == (
-        "Ваш заказ отменен. Причина: нет товара"
+        "CANCELLED: Ваш заказ отменен. Причина: нет товара"
     )
     assert notification_message(OrderStatus.CANCELLED) == (
-        "Ваш заказ отменен. Причина: не указана"
+        "CANCELLED: Ваш заказ отменен. Причина: не указана"
     )
 
 
@@ -43,14 +43,19 @@ async def test_notifier_sends_request() -> None:
     notifier = OrderNotifier(client)
     order_id = uuid4()
 
-    ok = await notifier.notify_status(order_id, OrderStatus.NEW)
+    ok = await notifier.notify_status(
+        order_id,
+        OrderStatus.NEW,
+        user_id="user-1",
+    )
 
     assert ok is True
     assert len(client.calls) == 1
     call = client.calls[0]
+    assert call.user_id == "user-1"
     assert call.reference_id == str(order_id)
     assert call.idempotency_key == f"{order_id}:NEW"
-    assert call.message == "Ваш заказ создан и ожидает оплаты"
+    assert call.message == "NEW: Ваш заказ создан и ожидает оплаты"
 
 
 @pytest.mark.asyncio
@@ -60,7 +65,11 @@ async def test_notifier_swallows_errors() -> None:
     )
     notifier = OrderNotifier(client)
 
-    ok = await notifier.notify_status(uuid4(), OrderStatus.PAID)
+    ok = await notifier.notify_status(
+        uuid4(),
+        OrderStatus.PAID,
+        user_id="user-1",
+    )
 
     assert ok is False
     assert len(client.calls) == 1

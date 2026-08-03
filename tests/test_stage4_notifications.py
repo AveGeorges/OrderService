@@ -58,7 +58,9 @@ async def test_notify_new_on_create() -> None:
         ),
     )
     assert len(notifications.calls) == 1
+    assert notifications.calls[0].user_id == "u1"
     assert notifications.calls[0].idempotency_key == f"{order.id}:NEW"
+    assert "NEW" in notifications.calls[0].message
     assert "создан" in notifications.calls[0].message
 
 
@@ -106,6 +108,7 @@ async def test_notify_paid_on_callback_once() -> None:
 
     assert len(notifications.calls) == 1
     assert notifications.calls[0].idempotency_key == f"{order.id}:PAID"
+    assert "PAID" in notifications.calls[0].message
 
 
 async def test_notify_cancelled_on_payment_failed() -> None:
@@ -211,6 +214,7 @@ async def test_notify_shipped_and_cancelled_from_shipping() -> None:
     )
     assert orders[order.id].status == OrderStatus.SHIPPED
     assert notifications.calls[0].idempotency_key == f"{order.id}:SHIPPED"
+    assert "SHIPPED" in notifications.calls[0].message
 
 
 @pytest.mark.asyncio
